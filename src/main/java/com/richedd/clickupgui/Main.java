@@ -1,14 +1,15 @@
 package com.richedd.clickupgui;
 
 import com.richedd.clickupgui.config.ConfigurationManager;
-import com.richedd.clickupgui.config.ClickUpConfig;
 import com.richedd.clickupgui.service.ClickUpService;
 import com.richedd.clickupgui.ui.ConfigurationDialog;
+import com.richedd.clickupgui.ui.MainView;
 import javafx.application.Application;
 import javafx.scene.Scene;
-import javafx.scene.control.Label;
-import javafx.scene.layout.StackPane;
+import javafx.scene.control.Alert;
 import javafx.stage.Stage;
+import java.io.IOException;
+import java.util.Optional;
 
 public class Main extends Application {
     private ConfigurationManager configManager;
@@ -23,21 +24,32 @@ public class Main extends Application {
     public void start(Stage primaryStage) {
         // Check if the application is configured
         if (!configManager.isConfigured()) {
-            boolean configured = ConfigurationDialog.showAndWait(configManager);
-            if (!configured) {
-                // User cancelled configuration
+            ConfigurationDialog dialog = new ConfigurationDialog();
+            Optional<String> result = dialog.showAndWait();
+            
+            if (result.isEmpty()) {
                 System.exit(0);
-                return;
+            }
+            
+            try {
+                configManager.setApiKey(result.get());
+                configManager.saveConfiguration();
+            } catch (IOException e) {
+                Alert alert = new Alert(Alert.AlertType.ERROR);
+                alert.setTitle("Configuration Error");
+                alert.setHeaderText(null);
+                alert.setContentText("Failed to save configuration: " + e.getMessage());
+                alert.showAndWait();
+                System.exit(1);
             }
         }
 
-        // Initialize ClickUp service with the configured API key
-        clickUpService = new ClickUpService(new ClickUpConfig(configManager.getApiKey()));
+        // Initialize the ClickUp service with the API key
+        clickUpService = new ClickUpService(configManager.getApiKey());
 
-        // Create the main window
-        Label label = new Label("ClickUp GUI");
-        StackPane root = new StackPane(label);
-        Scene scene = new Scene(root, 800, 600);
+        // Create the main view
+        MainView mainView = new MainView(clickUpService, primaryStage);
+        Scene scene = new Scene(mainView, 1200, 800);
         
         primaryStage.setTitle("ClickUp GUI");
         primaryStage.setScene(scene);

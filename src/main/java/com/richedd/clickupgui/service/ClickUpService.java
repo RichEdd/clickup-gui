@@ -1,149 +1,217 @@
 package com.richedd.clickupgui.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import com.richedd.clickupgui.config.ClickUpConfig;
-import com.richedd.clickupgui.exception.ClickUpException;
 import com.richedd.clickupgui.model.Task;
 import com.richedd.clickupgui.model.Workspace;
-import okhttp3.*;
+import com.richedd.clickupgui.model.SpaceWithLists;
+import com.richedd.clickupgui.model.TaskList;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+
 import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 
 public class ClickUpService {
-    private final OkHttpClient client;
+    private static final String API_BASE_URL = "https://api.clickup.com/api/v2";
+    private final String apiKey;
+    private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
-    private final ClickUpConfig config;
 
-    public ClickUpService(ClickUpConfig config) {
-        this.config = config;
-        this.client = new OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(true)
-            .build();
-            
+    public ClickUpService(String apiKey) {
+        this.apiKey = apiKey;
+        this.httpClient = HttpClient.newHttpClient();
         this.objectMapper = new ObjectMapper()
             .registerModule(new JavaTimeModule());
     }
 
     public CompletableFuture<List<Workspace>> getWorkspaces() {
-        Request request = new Request.Builder()
-            .url(config.getApiBaseUrl() + "/team")
-            .addHeader("Authorization", config.getApiKey())
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(API_BASE_URL + "/team"))
+            .header("Authorization", apiKey)
+            .GET()
             .build();
 
-        return makeAsyncRequest(request, new TypeReference<ApiResponse<List<Workspace>>>() {})
-            .thenApply(response -> response.teams);
+        return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+            .thenApply(response -> {
+                try {
+                    JsonNode root = objectMapper.readTree(response.body());
+                    return objectMapper.convertValue(root.get("teams"), 
+                        new TypeReference<List<Workspace>>() {});
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to parse workspaces", e);
+                }
+            });
     }
 
     public CompletableFuture<List<Task>> getTasksForList(String listId) {
-        Request request = new Request.Builder()
-            .url(config.getApiBaseUrl() + "/list/" + listId + "/task")
-            .addHeader("Authorization", config.getApiKey())
+        System.out.println("Fetching tasks for list ID: " + listId);
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(API_BASE_URL + "/list/" + listId + "/task?archived=false"))
+            .header("Authorization", apiKey)
+            .GET()
             .build();
 
-        return makeAsyncRequest(request, new TypeReference<ApiResponse<List<Task>>>() {})
-            .thenApply(response -> response.tasks);
+        return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+            .thenApply(response -> {
+                try {
+                    System.out.println("Response status code: " + response.statusCode());
+                    if (response.statusCode() != 200) {
+                        String errorBody = response.body();
+                        System.err.println("Error response body: " + errorBody);
+                        throw new RuntimeException("Failed to get tasks. Status: " + response.statusCode() + ", Body: " + errorBody);
+                    }
+
+                    JsonNode root = objectMapper.readTree(response.body());
+                    if (!root.has("tasks")) {
+                        System.err.println("Response does not contain 'tasks' field: " + response.body());
+                        throw new RuntimeException("Invalid response format: missing 'tasks' field");
+                    }
+
+                    try {
+                        // Configure ObjectMapper to handle nested objects
+                        objectMapper.configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+                        
+                        List<Task> tasks = objectMapper.convertValue(root.get("tasks"), 
+                            new TypeReference<List<Task>>() {});
+                        System.out.println("Successfully loaded " + tasks.size() + " tasks from list " + listId);
+                        return tasks;
+                    } catch (Exception e) {
+                        System.err.println("Deserialization error: " + e.getMessage());
+                        System.err.println("Stack trace:");
+                        e.printStackTrace();
+                        throw new RuntimeException("Failed to deserialize tasks: " + e.getMessage(), e);
+                    }
+                } catch (IOException e) {
+                    System.err.println("Error parsing tasks response: " + e.getMessage());
+                    throw new RuntimeException("Failed to parse tasks: " + e.getMessage(), e);
+                }
+            });
     }
 
     public CompletableFuture<Task> createTask(String listId, Task task) {
-        RequestBody body = RequestBody.create(
-            MediaType.parse("application/json"),
-            toJson(task)
-        );
+        String json;
+        try {
+            json = objectMapper.writeValueAsString(task);
+        } catch (IOException e) {
+            CompletableFuture<Task> future = new CompletableFuture<>();
+            future.completeExceptionally(e);
+            return future;
+        }
 
-        Request request = new Request.Builder()
-            .url(config.getApiBaseUrl() + "/list/" + listId + "/task")
-            .addHeader("Authorization", config.getApiKey())
-            .post(body)
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(API_BASE_URL + "/list/" + listId + "/task"))
+            .header("Authorization", apiKey)
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(json))
             .build();
 
-        return makeAsyncRequest(request, new TypeReference<ApiResponse<Task>>() {})
-            .thenApply(response -> response.task);
+        return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+            .thenApply(response -> {
+                try {
+                    return objectMapper.readValue(response.body(), Task.class);
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to parse created task", e);
+                }
+            });
     }
 
     public CompletableFuture<Task> updateTask(String taskId, Task task) {
-        RequestBody body = RequestBody.create(
-            MediaType.parse("application/json"),
-            toJson(task)
-        );
+        String json;
+        try {
+            json = objectMapper.writeValueAsString(task);
+        } catch (IOException e) {
+            CompletableFuture<Task> future = new CompletableFuture<>();
+            future.completeExceptionally(e);
+            return future;
+        }
 
-        Request request = new Request.Builder()
-            .url(config.getApiBaseUrl() + "/task/" + taskId)
-            .addHeader("Authorization", config.getApiKey())
-            .put(body)
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(API_BASE_URL + "/task/" + taskId))
+            .header("Authorization", apiKey)
+            .header("Content-Type", "application/json")
+            .PUT(HttpRequest.BodyPublishers.ofString(json))
             .build();
 
-        return makeAsyncRequest(request, new TypeReference<ApiResponse<Task>>() {})
-            .thenApply(response -> response.task);
+        return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+            .thenApply(response -> {
+                try {
+                    return objectMapper.readValue(response.body(), Task.class);
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to parse updated task", e);
+                }
+            });
     }
 
     public CompletableFuture<Void> deleteTask(String taskId) {
-        Request request = new Request.Builder()
-            .url(config.getApiBaseUrl() + "/task/" + taskId)
-            .addHeader("Authorization", config.getApiKey())
-            .delete()
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(API_BASE_URL + "/task/" + taskId))
+            .header("Authorization", apiKey)
+            .DELETE()
             .build();
 
-        return makeAsyncRequest(request, new TypeReference<Void>() {});
-    }
-
-    private <T> CompletableFuture<T> makeAsyncRequest(Request request, TypeReference<T> typeReference) {
-        CompletableFuture<T> future = new CompletableFuture<>();
-
-        client.newCall(request).enqueue(new Callback() {
-            @Override
-            public void onFailure(Call call, IOException e) {
-                future.completeExceptionally(new ClickUpException("Network error", e));
-            }
-
-            @Override
-            public void onResponse(Call call, Response response) throws IOException {
-                try (ResponseBody responseBody = response.body()) {
-                    String responseString = responseBody != null ? responseBody.string() : null;
-                    
-                    if (!response.isSuccessful()) {
-                        future.completeExceptionally(new ClickUpException(
-                            "API error: " + response.code() + " " + response.message(),
-                            response.code(),
-                            responseString
-                        ));
-                        return;
-                    }
-
-                    if (typeReference.getType() == Void.class) {
-                        future.complete(null);
-                        return;
-                    }
-
-                    T result = objectMapper.readValue(responseString, typeReference);
-                    future.complete(result);
-                } catch (Exception e) {
-                    future.completeExceptionally(new ClickUpException("Failed to process response", e));
+        return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+            .thenApply(response -> {
+                if (response.statusCode() != 200) {
+                    throw new RuntimeException("Failed to delete task: " + response.body());
                 }
-            }
-        });
-
-        return future;
+                return null;
+            });
     }
 
-    private String toJson(Object obj) {
-        try {
-            return objectMapper.writeValueAsString(obj);
-        } catch (Exception e) {
-            throw new ClickUpException("Failed to serialize object to JSON", e);
-        }
+    public CompletableFuture<List<SpaceWithLists>> getSpacesWithLists(String workspaceId) {
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(API_BASE_URL + "/team/" + workspaceId + "/space?archived=false"))
+            .header("Authorization", apiKey)
+            .GET()
+            .build();
+
+        return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+            .thenCompose(response -> {
+                try {
+                    JsonNode root = objectMapper.readTree(response.body());
+                    List<SpaceWithLists> spaces = objectMapper.convertValue(root.get("spaces"),
+                        new TypeReference<List<SpaceWithLists>>() {});
+                    
+                    // Create a list of futures for getting lists for each space
+                    List<CompletableFuture<SpaceWithLists>> futures = spaces.stream()
+                        .map(space -> getListsForSpace(space.getId())
+                            .thenApply(lists -> {
+                                space.setLists(lists);
+                                return space;
+                            }))
+                        .toList();
+                    
+                    // Wait for all futures to complete
+                    return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                        .thenApply(v -> spaces);
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to parse spaces", e);
+                }
+            });
     }
 
-    // Response wrapper class for ClickUp API
-    private static class ApiResponse<T> {
-        public T tasks;
-        public T task;
-        public T teams;
+    private CompletableFuture<List<TaskList>> getListsForSpace(String spaceId) {
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(API_BASE_URL + "/space/" + spaceId + "/list?archived=false"))
+            .header("Authorization", apiKey)
+            .GET()
+            .build();
+
+        return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+            .thenApply(response -> {
+                try {
+                    JsonNode root = objectMapper.readTree(response.body());
+                    return objectMapper.convertValue(root.get("lists"),
+                        new TypeReference<List<TaskList>>() {});
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to parse lists", e);
+                }
+            });
     }
 } 

@@ -1,48 +1,27 @@
 package com.richedd.clickupgui.ui;
 
-import com.richedd.clickupgui.config.ConfigurationManager;
+import javafx.application.HostServices;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.layout.GridPane;
-import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
-import java.util.Optional;
+import javafx.stage.Stage;
+import java.awt.Desktop;
+import java.net.URI;
 
-public class ConfigurationDialog extends Dialog<Boolean> {
+public class ConfigurationDialog extends Dialog<String> {
     private final TextField apiKeyField;
-    private final ConfigurationManager configManager;
 
-    public ConfigurationDialog(ConfigurationManager configManager) {
-        this.configManager = configManager;
-        
-        // Dialog setup
+    public ConfigurationDialog() {
         setTitle("ClickUp Configuration");
-        setHeaderText("Please enter your ClickUp API key to get started.");
-        
-        // Set the button types
-        ButtonType saveButtonType = new ButtonType("Save", ButtonBar.ButtonData.OK_DONE);
-        getDialogPane().getButtonTypes().addAll(saveButtonType, ButtonType.CANCEL);
+        setHeaderText("Please enter your ClickUp API key");
+        setContentText("You can find your API key in ClickUp settings under Apps > API Token.");
 
-        // Create the API key field
+        // Create the API key input field
         apiKeyField = new TextField();
-        apiKeyField.setPromptText("Enter your ClickUp API key");
-        
-        // Create help text with instructions
-        TextArea helpText = new TextArea(
-            "To get your API key:\n" +
-            "1. Log in to ClickUp\n" +
-            "2. Go to Settings\n" +
-            "3. Click on 'Apps'\n" +
-            "4. Find 'API Token' section\n" +
-            "5. Click 'Generate' or copy your existing API key"
-        );
-        helpText.setEditable(false);
-        helpText.setWrapText(true);
-        helpText.setPrefRowCount(6);
-        helpText.setMaxWidth(Double.MAX_VALUE);
-        
-        // Create the layout
+        apiKeyField.setPromptText("Enter your API key");
+
+        // Create the dialog content
         GridPane grid = new GridPane();
         grid.setHgap(10);
         grid.setVgap(10);
@@ -50,15 +29,25 @@ public class ConfigurationDialog extends Dialog<Boolean> {
 
         grid.add(new Label("API Key:"), 0, 0);
         grid.add(apiKeyField, 1, 0);
-        GridPane.setHgrow(apiKeyField, Priority.ALWAYS);
-        
-        grid.add(new Label("Instructions:"), 0, 1);
-        grid.add(helpText, 1, 1);
+
+        // Add hyperlink to ClickUp API documentation
+        Hyperlink link = new Hyperlink("How to get your API key?");
+        link.setOnAction(e -> {
+            try {
+                Desktop.getDesktop().browse(new URI("https://clickup.com/api"));
+            } catch (Exception ex) {
+                // Silently fail if the browser cannot be opened
+            }
+        });
+        grid.add(link, 1, 1);
 
         getDialogPane().setContent(grid);
-        getDialogPane().setMinHeight(Region.USE_PREF_SIZE);
-        
-        // Enable/Disable save button depending on whether API key was entered
+
+        // Add buttons
+        ButtonType saveButtonType = new ButtonType("Save", ButtonBar.ButtonData.OK_DONE);
+        getDialogPane().getButtonTypes().addAll(saveButtonType, ButtonType.CANCEL);
+
+        // Enable/Disable save button depending on whether an API key was entered
         Node saveButton = getDialogPane().lookupButton(saveButtonType);
         saveButton.setDisable(true);
 
@@ -66,35 +55,12 @@ public class ConfigurationDialog extends Dialog<Boolean> {
             saveButton.setDisable(newValue.trim().isEmpty())
         );
 
-        // Set the result converter
+        // Convert the result to String when the save button is clicked
         setResultConverter(dialogButton -> {
             if (dialogButton == saveButtonType) {
-                String apiKey = apiKeyField.getText().trim();
-                if (!apiKey.isEmpty()) {
-                    configManager.setApiKey(apiKey);
-                    try {
-                        configManager.saveConfiguration();
-                        return true;
-                    } catch (Exception e) {
-                        showError("Failed to save configuration: " + e.getMessage());
-                    }
-                }
+                return apiKeyField.getText().trim();
             }
-            return false;
+            return null;
         });
-    }
-
-    private void showError(String message) {
-        Alert alert = new Alert(Alert.AlertType.ERROR);
-        alert.setTitle("Configuration Error");
-        alert.setHeaderText(null);
-        alert.setContentText(message);
-        alert.showAndWait();
-    }
-
-    public static boolean showAndWait(ConfigurationManager configManager) {
-        ConfigurationDialog dialog = new ConfigurationDialog(configManager);
-        Optional<Boolean> result = dialog.showAndWait();
-        return result.orElse(false);
     }
 } 
