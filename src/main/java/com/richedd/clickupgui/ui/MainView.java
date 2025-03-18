@@ -79,9 +79,11 @@ public class MainView extends BorderPane {
         Menu fileMenu = new Menu("File");
         MenuItem settingsItem = new MenuItem("Settings");
         settingsItem.setOnAction(e -> showSettings());
+        MenuItem createDevCategoriesItem = new MenuItem("Create Development Categories");
+        createDevCategoriesItem.setOnAction(e -> createDevelopmentCategoriesLists());
         MenuItem exitItem = new MenuItem("Exit");
         exitItem.setOnAction(e -> handleExit());
-        fileMenu.getItems().addAll(settingsItem, new SeparatorMenuItem(), exitItem);
+        fileMenu.getItems().addAll(settingsItem, createDevCategoriesItem, new SeparatorMenuItem(), exitItem);
         
         // Help Menu
         Menu helpMenu = new Menu("Help");
@@ -122,6 +124,37 @@ public class MainView extends BorderPane {
         alert.showAndWait();
     }
 
+    private void createDevelopmentCategoriesLists() {
+        // Get spaces from the team first
+        clickUpService.getSpacesForTeam("9013790997")
+            .thenAccept(spaces -> {
+                Platform.runLater(() -> {
+                    for (SpaceWithLists space : spaces) {
+                        clickUpService.createList(space.getId(), "Development Categories", "Container for development task categories")
+                            .thenAccept(list -> {
+                                Platform.runLater(() -> {
+                                    showSuccess("List Created", "Development Categories list created in space " + space.getName());
+                                    // Refresh the navigation tree to show the new list
+                                    loadWorkspaces();
+                                });
+                            })
+                            .exceptionally(throwable -> {
+                                Platform.runLater(() -> {
+                                    showError("Error Creating List", "Failed to create list in space " + space.getName() + ": " + throwable.getMessage());
+                                });
+                                return null;
+                            });
+                    }
+                });
+            })
+            .exceptionally(throwable -> {
+                Platform.runLater(() -> {
+                    showError("Error Getting Spaces", "Failed to get spaces: " + throwable.getMessage());
+                });
+                return null;
+            });
+    }
+
     private void setupNavigationPanel() {
         navigationTree = new TreeView<>();
         navigationTree.setShowRoot(false);
@@ -152,35 +185,65 @@ public class MainView extends BorderPane {
                         selectedTask = null;
                         updateTaskDetailPanel();
                         
-                        // Show space information in the center panel
-                        VBox spaceInfo = new VBox(10);
-                        spaceInfo.setPadding(new Insets(20));
+                        // Create a VBox for space content
+                        VBox spaceContent = new VBox(10);
+                        spaceContent.setPadding(new Insets(20));
+                        spaceContent.setStyle("-fx-background-color: white;");
                         
+                        // Space header
                         Label spaceTitle = new Label(item.getName());
                         spaceTitle.setStyle("-fx-font-size: 24px; -fx-font-weight: bold;");
                         
-                        Label listsLabel = new Label("Lists in this space:");
-                        listsLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
+                        // Lists section
+                        Label listsLabel = new Label("Lists");
+                        listsLabel.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
                         
-                        ListView<NavigationItem> listsView = new ListView<>();
-                        listsView.setMaxHeight(400);
+                        // Create a VBox for lists
+                        VBox listsContainer = new VBox(10);
+                        listsContainer.setPadding(new Insets(10));
                         
-                        // Add lists from the TreeItem children
+                        // Add each list as a clickable item
                         TreeItem<NavigationItem> spaceItem = newVal;
                         for (TreeItem<NavigationItem> listItem : spaceItem.getChildren()) {
-                            listsView.getItems().add(listItem.getValue());
+                            NavigationItem listNav = listItem.getValue();
+                            
+                            // Create a list item container
+                            HBox listItemBox = new HBox(10);
+                            listItemBox.setPadding(new Insets(10));
+                            listItemBox.setStyle("-fx-background-color: #f5f5f5; -fx-background-radius: 5;");
+                            listItemBox.setAlignment(Pos.CENTER_LEFT);
+                            
+                            // List name
+                            Label listName = new Label(listNav.getName());
+                            listName.setStyle("-fx-font-size: 14px;");
+                            
+                            // View button
+                            Button viewButton = new Button("View Tasks");
+                            viewButton.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white;");
+                            viewButton.setOnAction(e -> loadTasksForList(listNav.getId()));
+                            
+                            listItemBox.getChildren().addAll(listName, new Region(), viewButton);
+                            HBox.setHgrow(listItemBox.getChildren().get(1), Priority.ALWAYS);
+                            
+                            // Add hover effect
+                            listItemBox.setOnMouseEntered(e -> 
+                                listItemBox.setStyle("-fx-background-color: #e0e0e0; -fx-background-radius: 5;"));
+                            listItemBox.setOnMouseExited(e -> 
+                                listItemBox.setStyle("-fx-background-color: #f5f5f5; -fx-background-radius: 5;"));
+                            
+                            listsContainer.getChildren().add(listItemBox);
                         }
                         
-                        // Handle list selection
-                        listsView.setOnMouseClicked(event -> {
-                            NavigationItem selectedList = listsView.getSelectionModel().getSelectedItem();
-                            if (selectedList != null) {
-                                loadTasksForList(selectedList.getId());
-                            }
-                        });
+                        // Add all components to the space content
+                        spaceContent.getChildren().addAll(
+                            spaceTitle,
+                            new Separator(),
+                            listsLabel,
+                            listsContainer
+                        );
                         
-                        spaceInfo.getChildren().addAll(spaceTitle, new Separator(), listsLabel, listsView);
-                        setCenter(spaceInfo);
+                        // Set the space content as the center content
+                        setCenter(spaceContent);
                         break;
                     case WORKSPACE:
                         // Show workspace details
@@ -188,41 +251,65 @@ public class MainView extends BorderPane {
                         selectedTask = null;
                         updateTaskDetailPanel();
                         
-                        // Show workspace information in the center panel
-                        VBox workspaceInfo = new VBox(10);
-                        workspaceInfo.setPadding(new Insets(20));
+                        // Create a VBox for workspace content
+                        VBox workspaceContent = new VBox(10);
+                        workspaceContent.setPadding(new Insets(20));
+                        workspaceContent.setStyle("-fx-background-color: white;");
                         
+                        // Workspace header
                         Label workspaceTitle = new Label(item.getName());
                         workspaceTitle.setStyle("-fx-font-size: 24px; -fx-font-weight: bold;");
                         
-                        Label spacesLabel = new Label("Spaces in this workspace:");
-                        spacesLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
+                        // Spaces section
+                        Label spacesLabel = new Label("Spaces");
+                        spacesLabel.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
                         
-                        ListView<NavigationItem> spacesView = new ListView<>();
-                        spacesView.setMaxHeight(400);
+                        // Create a VBox for spaces
+                        VBox spacesContainer = new VBox(10);
+                        spacesContainer.setPadding(new Insets(10));
                         
-                        // Add spaces from the TreeItem children
+                        // Add each space as a clickable item
                         TreeItem<NavigationItem> workspaceItem = newVal;
                         for (TreeItem<NavigationItem> spaceTreeItem : workspaceItem.getChildren()) {
-                            spacesView.getItems().add(spaceTreeItem.getValue());
+                            NavigationItem spaceNav = spaceTreeItem.getValue();
+                            
+                            // Create a space item container
+                            HBox spaceItemBox = new HBox(10);
+                            spaceItemBox.setPadding(new Insets(10));
+                            spaceItemBox.setStyle("-fx-background-color: #f5f5f5; -fx-background-radius: 5;");
+                            spaceItemBox.setAlignment(Pos.CENTER_LEFT);
+                            
+                            // Space name
+                            Label spaceName = new Label(spaceNav.getName());
+                            spaceName.setStyle("-fx-font-size: 14px;");
+                            
+                            // View button
+                            Button viewButton = new Button("View Space");
+                            viewButton.setStyle("-fx-background-color: #2196F3; -fx-text-fill: white;");
+                            viewButton.setOnAction(e -> navigationTree.getSelectionModel().select(spaceTreeItem));
+                            
+                            spaceItemBox.getChildren().addAll(spaceName, new Region(), viewButton);
+                            HBox.setHgrow(spaceItemBox.getChildren().get(1), Priority.ALWAYS);
+                            
+                            // Add hover effect
+                            spaceItemBox.setOnMouseEntered(e -> 
+                                spaceItemBox.setStyle("-fx-background-color: #e0e0e0; -fx-background-radius: 5;"));
+                            spaceItemBox.setOnMouseExited(e -> 
+                                spaceItemBox.setStyle("-fx-background-color: #f5f5f5; -fx-background-radius: 5;"));
+                            
+                            spacesContainer.getChildren().add(spaceItemBox);
                         }
                         
-                        // Handle space selection
-                        spacesView.setOnMouseClicked(event -> {
-                            NavigationItem selectedSpace = spacesView.getSelectionModel().getSelectedItem();
-                            if (selectedSpace != null) {
-                                // Find and select the corresponding tree item
-                                for (TreeItem<NavigationItem> spaceTreeItem : workspaceItem.getChildren()) {
-                                    if (spaceTreeItem.getValue().getId().equals(selectedSpace.getId())) {
-                                        navigationTree.getSelectionModel().select(spaceTreeItem);
-                                        break;
-                                    }
-                                }
-                            }
-                        });
+                        // Add all components to the workspace content
+                        workspaceContent.getChildren().addAll(
+                            workspaceTitle,
+                            new Separator(),
+                            spacesLabel,
+                            spacesContainer
+                        );
                         
-                        workspaceInfo.getChildren().addAll(workspaceTitle, new Separator(), spacesLabel, spacesView);
-                        setCenter(workspaceInfo);
+                        // Set the workspace content as the center content
+                        setCenter(workspaceContent);
                         break;
                 }
             }

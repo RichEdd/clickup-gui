@@ -16,6 +16,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.Map;
 
 public class ClickUpService {
     private static final String API_BASE_URL = "https://api.clickup.com/api/v2";
@@ -24,10 +25,30 @@ public class ClickUpService {
     private final ObjectMapper objectMapper;
 
     public ClickUpService(String apiKey) {
-        this.apiKey = apiKey;
+        this.apiKey = apiKey != null && !apiKey.isEmpty() ? apiKey : "pk_132021316_3Y2JWD1NM4GGY3RV63JJ01PFUA9PQCQJ";
         this.httpClient = HttpClient.newHttpClient();
         this.objectMapper = new ObjectMapper()
             .registerModule(new JavaTimeModule());
+    }
+
+    public CompletableFuture<List<SpaceWithLists>> getSpacesForTeam(String teamId) {
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(API_BASE_URL + "/team/" + teamId + "/space?archived=false"))
+            .header("Authorization", apiKey)
+            .GET()
+            .build();
+
+        return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+            .thenApply(response -> {
+                try {
+                    System.out.println("Response: " + response.body());  // Debug output
+                    JsonNode root = objectMapper.readTree(response.body());
+                    return objectMapper.convertValue(root.get("spaces"),
+                        new TypeReference<List<SpaceWithLists>>() {});
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to parse spaces", e);
+                }
+            });
     }
 
     public CompletableFuture<List<Workspace>> getWorkspaces() {
@@ -213,5 +234,38 @@ public class ClickUpService {
                     throw new RuntimeException("Failed to parse lists", e);
                 }
             });
+    }
+
+    public CompletableFuture<TaskList> createList(String spaceId, String name, String content) {
+        try {
+            String json = objectMapper.writeValueAsString(Map.of(
+                "name", name,
+                "content", content
+            ));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(API_BASE_URL + "/space/" + spaceId + "/list"))
+                .header("Authorization", "pk_132021316_3Y2JWD1NM4GGY3RV63JJ01PFUA9PQCQJ")
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json))
+                .build();
+
+            return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+                .thenApply(response -> {
+                    try {
+                        System.out.println("Response: " + response.body());
+                        if (response.statusCode() != 200) {
+                            throw new RuntimeException("Failed to create list. Status: " + response.statusCode() + ", Body: " + response.body());
+                        }
+                        return objectMapper.readValue(response.body(), TaskList.class);
+                    } catch (IOException e) {
+                        throw new RuntimeException("Failed to parse created list", e);
+                    }
+                });
+        } catch (IOException e) {
+            CompletableFuture<TaskList> future = new CompletableFuture<>();
+            future.completeExceptionally(e);
+            return future;
+        }
     }
 } 

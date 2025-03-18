@@ -11,6 +11,15 @@ public class TaskList {
     private String content;
     private boolean archived;
 
+    public TaskList() {
+    }
+
+    public TaskList(String name, String content) {
+        this.name = name;
+        this.content = content;
+        this.archived = false;
+    }
+
     public String getId() {
         return id;
     }
